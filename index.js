@@ -1,4 +1,4 @@
-const fs = require('fs');
+const fs = require('fs-extra');
 const path = require('path');
 const convertNetscapeToJson = require('./converter.js');
 
@@ -10,7 +10,7 @@ const url2 = 'https://pay.google.com/\\nhttps://ads.google.com/';
 const dirs = getDirectories(path.resolve('logs'));
 
 let spendxList = dirs.filter((name) => name.includes('Spend X'));
-let santaList = dirs.filter((name) => name.includes('1_of_1'));
+let santaList = dirs.filter((name) => /\(\d_of_\d\)/.test(name)); //регулярка так как значения меняются
 let paranoidList = dirs.filter((name) => name.includes('Paranoid'));
 
 let result = [];
@@ -23,7 +23,17 @@ function init(list, type) {
     ThroughDirectory(dir);
 
     if (files.length > 0) {
-      createSamaraFile(files, i, type);
+      let isCreated = createSamaraFile(files, i, type);
+      if (!isCreated) {
+        fs.move(
+          dir,
+          `${path.resolve('errors')}/${path.basename(dir)}`,
+          (err) => {
+            if (err) return console.error(err);
+            console.log(`Не могу найти код страны: ${dir}`);
+          }
+        );
+      }
     }
   });
 }
@@ -85,19 +95,20 @@ function findTargetFile(files, type) {
 
   let fileData = {};
 
+  let tempStr;
+
   if (targetFile) {
-    if (type === 'Spend X') {
-      fileData.countryCode = targetFile
-        .match(/_\w{2}_\d+\.\d+\.\d+\.\d+/)[0]
-        .match(/(?<=_)\w{2}?(?=_)/)[0];
-    } else if (type === 'Santa') {
-      // fileData.countryCode = targetFile.match(
-      //   /(?<=\(1_of_1\)_)\w{2}?(?=\[)/
-      // )[0];
-      fileData.countryCode = targetFile.match(/(?<=_)[A-Z]{2}(?=(_|\[))/)[0];
-    } else {
-      fileData.countryCode = targetFile.match(/(?<=Gpay_)\w{2}(?=_)/)[0];
+    tempStr = targetFile.match(/(?<=_)[A-Z]{2}(?=(_|\[))/gm);
+
+    if (Array.isArray(tempStr) && tempStr.length > 0) {
+      if (tempStr.length > 1) {
+        tempStr = null;
+      } else {
+        tempStr = tempStr[0];
+      }
     }
+
+    fileData.countryCode = tempStr;
 
     fileData.content = fs.readFileSync(targetFile, { encoding: 'utf-8' });
   }
@@ -123,6 +134,10 @@ function createSamaraFile(files, index, type) {
 
   const fileData = findTargetFile(files, type);
 
+  if (!fileData.countryCode) {
+    return false;
+  }
+
   result.push(
     `${fileData.countryCode}-00${index + 1}\t${group}\t${url1}\t${url2}\t${
       fileData.content
@@ -134,6 +149,7 @@ function createSamaraFile(files, index, type) {
   });
 
   fs.writeFileSync(path.resolve('result.txt'), result.join('\n'));
+  return true;
 }
 
 //Получение всех папок
